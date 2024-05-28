@@ -18,8 +18,8 @@
 /**********************全局变量**********************/
 Ticker clockTimer;
 
-//CTM class
-NetworkTime networkTime;
+// 创建TimeClient实例
+TimeClient_CTM networkTime(timeApiUrl);
 
 bool flag = true;
 bool isBusy = false;
@@ -52,6 +52,7 @@ void setup(void) {
 
   // 连接wifi
   // delete old config
+  WiFi.config(ip_local, geta_way, subnet, dns1, dns2);
   WiFi.disconnect(true);
   //WiFi.mode(WIFI_STA);
   //scanwifi();
@@ -83,11 +84,12 @@ void setup(void) {
   EPD_HW_Init();  // Electronic paper initialization
   EPD_SetRAMValue_BaseMap(gImage_frame);
   EPD_DeepSleep();  // Enter deep sleep,Sleep instruction is necessary, please do not delete!!!
-  networkTime.setup();
+
   memset(clear, 0xFF, sizeof(clear));
   memset(clearWeather, 0xFF, sizeof(clearWeather));
 
   // 初次更新数据
+  networkTime.updateTime();
   updateWeather();
   updateTime();
   updateBattery();
@@ -129,7 +131,7 @@ void updateBattery() {
 }
 
 // 更新当前时间
-void updateTime() {
+void updateTime(int xaddr, int yaddr) {
   if (WiFi.status() == WL_CONNECTED) {
     String ntTime = networkTime.getCurrentTime();
     String ntDate = networkTime.getCurrentDate();
@@ -139,7 +141,7 @@ void updateTime() {
     String timeString = ntDate + " 周" + ntWeek + " " + ntTime;
     int length = 0;
     ntTimeLable = extractUtf8Characters(timeString, &length);
-    EPD_Dis_Part(128 - 16, 296 - 81, ntTimeLable, length * 8, 16);
+    EPD_Dis_Part(128 - xaddr, 296 - yaddr, ntTimeLable, length * 8, 16);
   } else {
     networkTime.updateTime();
   }
@@ -151,11 +153,13 @@ void updateWeather() {
   if (isWifiConnected()) {
     int httpCode = getWeatherJson(&weatherJson);
     if (httpCode == 200) {
-      serializeJson(weatherJson, Serial);
-      Serial.println("");
+      if (Serial) {
+        serializeJson(weatherJson, Serial);
+        Serial.println("");
+      }
       //Serial.println((int)weatherJson["status"]);
     } else {
-      Serial.println("Http requests fail......");
+      if (Serial) Serial.println("Http requests fail......");
       return;
     }
   } else {
@@ -165,17 +169,18 @@ void updateWeather() {
     int retries = 0;
     while (WiFi.status() != WL_CONNECTED && retries < 30) {
       delay(500);
-      Serial.print(".");
+      if (Serial) Serial.print(".");
       retries++;
     }
     checkWifiStatus();
     return;
   }
 
+  updateTime(32);
   if (weatherJson != NULL && (int)weatherJson["status"] == 0) {
     int i;
     const char* weatherNowText = weatherJson["result"]["now"]["text"];
-    Serial.println(weatherNowText);
+    if (Serial) Serial.println(weatherNowText);
     const unsigned char* weatherNow = findWeather(weatherNowText);
 
     int weatherNowTemp = weatherJson["result"]["now"]["temp"];
@@ -245,19 +250,22 @@ void scanwifi() {
   int numNetworks = WiFi.scanNetworks();
 
   if (numNetworks == 0) {
-    Serial.println("No WiFi networks found");
+    if (Serial) Serial.println("No WiFi networks found");
   } else {
-    Serial.print("Found ");
-    Serial.print(numNetworks);
-    Serial.println(" WiFi networks:");
-
+    if (Serial) {
+      Serial.print("Found ");
+      Serial.print(numNetworks);
+      Serial.println(" WiFi networks:");
+    }
     for (int i = 0; i < numNetworks; i++) {
-      Serial.print(i + 1);
-      Serial.print(": ");
-      Serial.print(WiFi.SSID(i));  // 获取SSID
-      Serial.print(" (");
-      Serial.print(WiFi.RSSI(i));  // 获取信号强度
-      Serial.println(")");
+      if (Serial) {
+        Serial.print(i + 1);
+        Serial.print(": ");
+        Serial.print(WiFi.SSID(i));  // 获取SSID
+        Serial.print(" (");
+        Serial.print(WiFi.RSSI(i));  // 获取信号强度
+        Serial.println(")");
+      }
     }
   }
 }
@@ -266,30 +274,32 @@ void scanwifi() {
 void checkWifiStatus() {
   switch (WiFi.status()) {
     case WL_NO_SSID_AVAIL:
-      Serial.println("[WiFi] SSID not found");
+      if (Serial) Serial.println("[WiFi] SSID not found");
       break;
     case WL_CONNECT_FAILED:
-      Serial.print("[WiFi] Failed - WiFi not connected! Reason: ");
+      if (Serial) Serial.print("[WiFi] Failed - WiFi not connected! Reason: ");
       return;
       break;
     case WL_CONNECTION_LOST:
-      Serial.println("[WiFi] Connection was lost");
+      if (Serial) Serial.println("[WiFi] Connection was lost");
       break;
     case WL_SCAN_COMPLETED:
-      Serial.println("[WiFi] Scan is completed");
+      if (Serial) Serial.println("[WiFi] Scan is completed");
       break;
     case WL_DISCONNECTED:
-      Serial.println("[WiFi] WiFi is disconnected");
+      if (Serial) Serial.println("[WiFi] WiFi is disconnected");
       break;
     case WL_CONNECTED:
-      Serial.println("[WiFi] WiFi is connected!");
-      Serial.print("[WiFi] IP address: ");
-      Serial.println(WiFi.localIP());
+      if (Serial) {
+        Serial.println("[WiFi] WiFi is connected!");
+        Serial.print("[WiFi] IP address: ");
+        Serial.println(WiFi.localIP());
+      }
       return;
       break;
     default:
-      Serial.print("[WiFi] WiFi Status: ");
-      Serial.println(WiFi.status());
+      if (Serial) Serial.print("[WiFi] WiFi Status: ");
+      if (Serial) Serial.println(WiFi.status());
       break;
   }
 }
@@ -660,7 +670,7 @@ int getWeatherJson(JsonDocument* doc, String url, String district_id, String ak)
     String re = url + "?district_id=" + district_id + "&data_type=all&ak=" + ak;
     https.begin(re);
     int httpCode = https.GET();
-    Serial.printf("HTTP请求返回码: %d\n", httpCode);
+    if (Serial) Serial.printf("HTTP请求返回码: %d\n", httpCode);
     if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
       String payload = https.getString();
       // 解析 JSON 字符串
@@ -769,14 +779,14 @@ void resizeImage(const unsigned char* src, int srcWidth, int srcHeight, unsigned
   double resizeHight = dstHeight * 1.0 / srcHeight;
   unsigned char* resizeH = (unsigned char*)malloc((srcWidth * dstHeight) / 8);
   if (resizeH == NULL) {
-    Serial.printf("resizeH == NULL");
+    if (Serial) Serial.printf("resizeH == NULL");
     return;
   }
   memset(resizeH, 0xFF, (srcWidth * dstHeight) / 8);
-  Serial.printf("%d\n", (srcWidth * dstHeight) / 8);
+  if (Serial) Serial.printf("%d\n", (srcWidth * dstHeight) / 8);
   // 如果是等大或者缩小，直接按倍数移位
   if (resizeHight <= 1) {
-    Serial.println("等大或者缩小");
+    if (Serial) Serial.println("等大或者缩小");
     for (int x = 0; x < srcWidth; x++) {
       for (int y = 0; y < srcHeight; y++) {
         // 定位原bit位
@@ -795,7 +805,7 @@ void resizeImage(const unsigned char* src, int srcWidth, int srcHeight, unsigned
     }
   } else {
     // 如果是放大，涉及插值
-    Serial.println("放大");
+    if (Serial) Serial.println("放大");
     for (int x = 0; x < srcWidth; x++) {
       for (int y = 0; y < srcHeight; y++) {
         // 锁定原bit位
@@ -860,14 +870,14 @@ void resizeImage(const unsigned char* src, int srcWidth, int srcHeight, unsigned
   double resizeWidth = dstWidth * 1.0 / srcWidth;
   *dst = (unsigned char*)malloc((dstWidth * dstHeight) / 8);
   if (*dst == NULL) {
-    Serial.printf("*dst == NULL");
+    if (Serial) Serial.printf("*dst == NULL");
     return;
   }
   memset(*dst, 0xFF, (dstWidth * dstHeight) / 8);
-  Serial.printf("%d\n", (dstWidth * dstHeight) / 8);
+  if (Serial) Serial.printf("%d\n", (dstWidth * dstHeight) / 8);
   // 如果是等大或者缩小，直接按倍数移位
   if (resizeWidth <= 1) {
-    Serial.println("等大或者缩小");
+    if (Serial) Serial.println("等大或者缩小");
     for (int y = 0; y < dstHeight / 8; y++) {
       for (int x = 0; x < srcWidth; x++) {
         // 计算源Byte位
@@ -879,7 +889,7 @@ void resizeImage(const unsigned char* src, int srcWidth, int srcHeight, unsigned
     }
   } else {
     // 如果是放大，涉及插值
-    Serial.println("放大");
+    if (Serial) Serial.println("放大");
     for (int y = 0; y < dstHeight / 8; y++) {
       for (int x = 0; x < srcWidth; x++) {
         // 计算源Byte位
@@ -923,8 +933,7 @@ void resizeImage(const unsigned char* src, int srcWidth, int srcHeight, unsigned
               } else {
                 (*dst)[offsetByteIndex] |= (1 << rowBitIndex);
               }
-            }
-            else {
+            } else {
               if (!preRowBitValue) {
                 (*dst)[offsetByteIndex] &= ~(1 << rowBitIndex);
               } else {
@@ -939,52 +948,105 @@ void resizeImage(const unsigned char* src, int srcWidth, int srcHeight, unsigned
 }
 
 /***************类实现*******************/
-// 网络时间构造函数
-NetworkTime::NetworkTime()
-  : timeClient(ntpUDP, "pool.ntp.org"), localEpoch(0) {}
-
-// 网络时间初始化
-void NetworkTime::setup() {
-  timeClient.begin();
-  timeClient.setTimeOffset(3600 * 8);  // 设置为东八区（北京时间）
-  updateTime();
-}
-
-// 网络时间更新
-void NetworkTime::updateTime() {
-  timeClient.update();
-  localEpoch = timeClient.getEpochTime();
-  time_t newEpoch = timeClient.getEpochTime();
-  setTime(localEpoch);
-  if (newEpoch > 1577836800) {  // 检查是否大于2020-01-01 00:00:00 (UTC)
-    localEpoch = newEpoch;
-    setTime(localEpoch);
-    if (Serial) Serial.print("时间更新成功: ");
-  } else {
-    if (Serial) Serial.println("获取的时间不合理，保持原有时间");
-  }
-}
-
 // 按YYYY/MM/DD HH:mm:ss格式返回当前时间字符串
-String NetworkTime::getCurrentDate() {
+int TimeClient_CTM::getYear() {
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  return timeinfo->tm_year + 1900;
+}
+
+int TimeClient_CTM::getMonth() {
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  return timeinfo->tm_mon + 1;
+}
+
+int TimeClient_CTM::getDay() {
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  return timeinfo->tm_mday;
+}
+
+int TimeClient_CTM::getHour() {
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  return timeinfo->tm_hour;
+}
+
+int TimeClient_CTM::getMinute() {
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  return timeinfo->tm_min;
+}
+
+int TimeClient_CTM::getSecond() {
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  return timeinfo->tm_sec;
+}
+String TimeClient_CTM::getCurrentDate() {
+
   // 计算当前本地日期
   char currentDate[11];
-  sprintf(currentDate, "%04d/%02d/%02d", year(), month(), day());
+  sprintf(currentDate, "%04d/%02d/%02d", getYear(), getMonth(), getDay());
   return String(currentDate);
 }
 
 // 按YYYY/MM/DD HH:mm:ss格式返回当前时间字符串
-String NetworkTime::getCurrentTime() {
+String TimeClient_CTM::getCurrentTime() {
   // 计算当前本地时间
   char currentTime[9];
-  sprintf(currentTime, "%02d:%02d:%02d", hour(), minute(), second());
+  sprintf(currentTime, "%02d:%02d:%02d", getHour(), getMinute(), getSecond());
   return String(currentTime);
 }
 
 // 获取星期几
-String NetworkTime::getDayOfWeek() {
+String TimeClient_CTM::getDayOfWeek() {
   time_t t = now();
   tm* timeInfo = localtime(&t);
   const char* daysOfWeek[] = { "日", "一", "二", "三", "四", "五", "六" };
   return String(daysOfWeek[timeInfo->tm_wday]);
+}
+
+void TimeClient_CTM::fetchTime() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(apiUrl);
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+      String payload = http.getString();
+      parseAndSetTime(payload);
+    } else {
+      if (Serial) Serial.printf("HTTP request failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+
+    http.end();
+  } else {
+    if (Serial) Serial.println("WiFi not connected");
+  }
+}
+
+void TimeClient_CTM::parseAndSetTime(const String& payload) {
+  JsonDocument jsonDoc;
+  DeserializationError error = deserializeJson(jsonDoc, payload);
+
+  if (error) {
+    if (Serial) Serial.print(F("deserializeJson() failed: "));
+    if (Serial) Serial.println(error.c_str());
+    return;
+  }
+
+  const char* datetime = jsonDoc["datetime"];
+  struct tm tm;
+  strptime(datetime, "%Y-%m-%dT%H:%M:%S%z", &tm);
+
+  // 将时间调整为东八区（UTC+8）
+  time_t t = mktime(&tm) + 8 * 3600;
+
+  struct timeval now = { .tv_sec = t };
+  settimeofday(&now, NULL);
+
+  if (Serial) Serial.print("System time updated to: ");
+  if (Serial) Serial.println(datetime);
 }
