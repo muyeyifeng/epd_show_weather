@@ -88,12 +88,35 @@ String extractValue(const String& data, const String& key);
 // 悬空PIN
 // #define VSPI_MISO = D4;
 
-/**********************END**************************/
+/******************网络时间更新**************************/
+class TimeClient_CTM {
+public:
+  TimeClient_CTM(const char* apiUrl)
+    : apiUrl(apiUrl) {}
+
+  void updateTime() {
+    fetchTime();
+  }
+  String getNormalString();
+  String getCurrentTime();
+  String getCurrentDate();
+  String getDayOfWeek();
+  int getYear();
+  int getMonth();
+  int getDay();
+  int getHour();
+  int getMinute();
+  int getSecond();
+
+private:
+  const char* apiUrl;
+  void fetchTime();
+  void parseAndSetTime(const String& payload);
+};
 
 /**********************函数声明**********************/
-void updateSysInfo();
 void updateBattery();
-void updateTime(String timeString, int xaddr = 16, int yaddr = 81);
+void updateTime(TimeClient_CTM networkTime, int xaddr = 16, int yaddr = 81);
 String checkWifiStatus();
 bool isWifiConnected();
 bool tryConnectWifi(const char* _ssid, const char* _password);
@@ -193,32 +216,6 @@ void resizeImage(const unsigned char* src, int srcWidth, int srcHeight, unsigned
 // Internet功能
 int getWeatherJson(JsonDocument* weatherJson, String _host = host, String _district_id = district_id, String _ak = ak);
 
-
-/******************网络时间更新**************************/
-class TimeClient_CTM {
-public:
-  TimeClient_CTM(const char* apiUrl)
-    : apiUrl(apiUrl) {}
-
-  void updateTime() {
-    fetchTime();
-  }
-  String getNormalString();
-  String getCurrentTime();
-  String getCurrentDate();
-  String getDayOfWeek();
-  int getYear();
-  int getMonth();
-  int getDay();
-  int getHour();
-  int getMinute();
-  int getSecond();
-
-private:
-  const char* apiUrl;
-  void fetchTime();
-  void parseAndSetTime(const String& payload);
-};
 /******************mapping 函数**************************/
 int findHanzi(const char* targetHanzi);
 int findAscii(const char targetAscii);

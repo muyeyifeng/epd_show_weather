@@ -15,26 +15,24 @@
 #include "src.h"
 
 /**********************全局变量**********************/
-Ticker clockTimer;
-
-// 创建TimeClient实例
-TimeClient_CTM networkTime(timeApiUrl);
-
 bool flag = true;
 bool isBusy = false;
-bool isWattingConnectNewWifi = false;
+
+unsigned char *volteLable;
+unsigned char *voltePerLable;
+unsigned char *ntTimeLable;
+
+static unsigned long lastWeatherSync = 0;
 
 unsigned char clear[33 * 2];
 unsigned char clearFull[hdpi * wdpi / 8];
 unsigned char clearWeather[42 * 56 / 8];
-unsigned char *volteLable;
-unsigned char *voltePerLable;
-unsigned char *ntTimeLable;
-String ssid;
-String passwd;
 
-static unsigned long lastWeatherSync = 0;
+String ssid = "";
+String passwd = "";
+String wificonfig = "";
 
+RTC_DATA_ATTR int isWattingConnectNewWifi = 0;
 RTC_DATA_ATTR int bootCount = 0;
 
 /*********************setup*********************/
@@ -51,6 +49,8 @@ void setup(void)
   print_wakeup_reason();
   Serial.print("bootCount: ");
   Serial.println(bootCount);
+  Serial.print("isWattingConnectNewWifi: ");
+  Serial.println(isWattingConnectNewWifi);
 
   // 初始化SPI端口
   pinMode(BUSY_Pin, INPUT);
@@ -71,6 +71,14 @@ void setup(void)
   // 设置Vdd输出为0作为GND
   digitalWrite(vddPin, LOW);
 
+  /*Only need to format SPIFFS the first time you run a
+  test or else use the SPIFFS plugin to create a partition */
+  if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED))
+  {
+    Serial.println("SPIFFS Mount Failed");
+    return;
+  }
+
   if (bootCount == 0)
   {
     // 打印初始信息
@@ -83,17 +91,8 @@ void setup(void)
 
     updateTxt("Booting Sketch...");
 
-    /*Only need to format SPIFFS the first time you run a
-    test or else use the SPIFFS plugin to create a partition */
-    if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED))
-    {
-      Serial.println("SPIFFS Mount Failed");
-      return;
-    }
-
     // 尝试从文件中获取wifi配置，若文件不存在，则先扫描wifi，再创建热点和网页让用户选择网络接入
     listDir(SPIFFS, "/", 0);
-    String wificonfig;
     if (readFile(SPIFFS, "/WiFiConfig.txt", &wificonfig))
     {
       delay(100);
@@ -126,15 +125,35 @@ void setup(void)
     {
       WebConnectWifi();
     }
-    // appendFile(SPIFFS, "/WiFiConfig.txt", "PASSWD: AAASSFF\r\n");
-    // readFile(SPIFFS, "/hello.txt");
-    delay(3000);
   }
 
   if (!isWattingConnectNewWifi)
   {
-    if ((passwd.length() < 8 && tryConnectWifi(ssid.c_str())) || (passwd.length() > 8 && tryConnectWifi(ssid.c_str(), passwd.c_str())))
+    listDir(SPIFFS, "/", 0);
+    if (readFile(SPIFFS, "/WiFiConfig.txt", &wificonfig))
     {
+      delay(100);
+      Serial.println("Read Config From WiFiConfig.txt");
+      delay(100);
+      Serial.println(wificonfig);
+
+      updateTxt("Read Config From WiFiConfig.txt", 1);
+      EPD_Part_Update();
+      ssid = extractValue(wificonfig, "SSID:");
+      passwd = extractValue(wificonfig, "PASSWD:");
+
+      delay(100);
+      Serial.println(ssid);
+      delay(100);
+      Serial.println(passwd);
+
+      if ((passwd.length() < 8 && tryConnectWifi(ssid.c_str())) || (passwd.length() > 8 && tryConnectWifi(ssid.c_str(), passwd.c_str())))
+      {
+      }
+      else
+      {
+        WebConnectWifi();
+      }
     }
     else
     {
@@ -142,9 +161,12 @@ void setup(void)
     }
 
     // 更新数据
+    
+    // 创建TimeClient实例
+    TimeClient_CTM networkTime(timeApiUrl);
     networkTime.updateTime();
     updateWeather();
-    updateTime(networkTime.getNormalString());
+    updateTime(networkTime);
     updateBattery();
     EPD_Part_Update();
     EPD_DeepSleep();
@@ -287,8 +309,9 @@ void updateTxt(String str, int lineOffset)
 }
 
 // 更新当前时间
-void updateTime(String timeString, int xaddr, int yaddr)
+void updateTime(TimeClient_CTM networkTime, int xaddr, int yaddr)
 {
+  String timeString = networkTime.getNormalString();
   Serial.println(timeString);
   if (WiFi.status() == WL_CONNECTED)
   {
@@ -351,10 +374,10 @@ void updateWeather()
     unsigned char *resizeLable = extractUtf8Characters(String(weatherNowText) + " " + String(weatherNowTemp) + String("℃"), &length2);
 
     JsonArray values = weatherJson["result"]["forecasts"];
-    String timeString = networkTime.getNormalString();
+    //String timeString = networkTime.getNormalString();
     for (i = 0; i < 2; i++)
     {
-      updateTime(timeString, 32);
+      //updateTime(timeString, 32);
       // 更新天气图标前将当日位置点阵置为白
       EPD_Dis_Part(0, wdpi - 36, clearWeather, 42, 56);         // 上排小图标重置
       EPD_Dis_Part(hdpi - 72, wdpi, gImage_leftbottom, 77, 72); // 下排大图标重置
@@ -389,69 +412,6 @@ void updateWeather()
       }
       EPD_Part_Update();
     }
-  }
-}
-
-// 系统信息定时更新
-// 所有局刷的系统信息统一更新后再刷新
-void updateSysInfo()
-{
-  if (millis() - lastWeatherSync > 3600000 / 2)
-  { // 3600000 毫秒 = 1 小时
-    updateWeather();
-    lastWeatherSync = millis();
-  }
-  updateTime(networkTime.getNormalString());
-  updateBattery();
-  EPD_Part_Update();
-}
-
-// 尝试连接wifi
-String checkWifiStatus()
-{
-  IPAddress localIP;
-  String loaclIP_str;
-  char *char_array;
-  switch (WiFi.status())
-  {
-  case WL_NO_SSID_AVAIL:
-    if (Serial)
-      Serial.println("[WiFi] SSID not found");
-    return "[WiFi] SSID not found";
-  case WL_CONNECT_FAILED:
-    if (Serial)
-      Serial.print("[WiFi] Failed - WiFi not connected! Reason: ");
-    return "[WiFi] Failed - WiFi not connected! Reason: ";
-  case WL_CONNECTION_LOST:
-    if (Serial)
-      Serial.println("[WiFi] Connection was lost");
-    return "[WiFi] Connection was lost";
-  case WL_SCAN_COMPLETED:
-    if (Serial)
-      Serial.println("[WiFi] Scan is completed");
-    return "[WiFi] Scan is completed";
-  case WL_DISCONNECTED:
-    if (Serial)
-      Serial.println("[WiFi] WiFi is disconnected");
-    return "[WiFi] WiFi is disconnected";
-  case WL_CONNECTED:
-    localIP = WiFi.localIP();
-    loaclIP_str = localIP.toString();
-    if (Serial)
-    {
-      Serial.println("[WiFi] WiFi is connected!");
-      Serial.print("[WiFi] IP address: ");
-      Serial.println(localIP);
-    }
-    char_array = new char[loaclIP_str.length() + 1]; // +1 for the null-terminator
-    strcpy(char_array, loaclIP_str.c_str());
-    return char_array;
-  default:
-    if (Serial)
-      Serial.print("[WiFi] WiFi Status: ");
-    if (Serial)
-      Serial.println(WiFi.status());
-    return "Unknow Status";
   }
 }
 
@@ -1526,6 +1486,7 @@ String readFile(fs::FS &fs, const char *path)
 
 bool readFile(fs::FS &fs, const char *path, String *content)
 {
+  *content = String();
   Serial.printf("Reading file: %s\r\n", path);
 
   File file = fs.open(path);
@@ -1790,7 +1751,8 @@ void handleSubmit()
 
 void WebConnectWifi()
 {
-  isWattingConnectNewWifi = true;
+  delay(3000);
+  isWattingConnectNewWifi = 1;
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   Serial.println("Scaning Wifi...");
