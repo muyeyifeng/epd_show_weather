@@ -22,15 +22,20 @@
 #include <Ticker.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
+#include <WebServer.h>
+#include "FS.h"
+#include "SPIFFS.h"
 /***********************END**************************/
 
 /*********************常量定义********************/
-const char* ssid = "<ssid>";
-const char* password = "<passwd>";
 const char* host = "https://api.map.baidu.com/weather/v1/";
-const char* district_id = "<district_id>";
-const char* ak = "<baidu_api_ak>";
+const char* district_id = "310115";
+const char* ak = "<AK>";
 const char* ntp_server = "cn.pool.ntp.org";
+
+//  定义热点名称和密码
+String ap_ssid = "ESP32_Hotspot";
+String ap_password = "123456789";
 // 时间API URL
 const char* timeApiUrl = "http://worldtimeapi.org/api/timezone/Asia/Shanghai";
 IPAddress ip_local(100, 100, 100, 50);
@@ -38,7 +43,33 @@ IPAddress geta_way(100, 100, 100, 1);
 IPAddress subnet(255, 255, 255, 0);
 IPAddress dns1(100, 100, 100, 1);
 IPAddress dns2(8, 8, 8, 8);
+
+// 创建Web服务器对象
+WebServer server(80);
 /**********************END***************************/
+
+/**********************File System ******************/
+#define FORMAT_SPIFFS_IF_FAILED true
+void listDir(fs::FS &fs, const char *dirname, uint8_t levels);
+String readFile(fs::FS &fs, const char *path);
+bool readFile(fs::FS &fs, const char *path, String *content);
+void writeFile(fs::FS &fs, const char *path, const char *message);
+void appendFile(fs::FS &fs, const char *path, const char *message);
+void renameFile(fs::FS &fs, const char *path1, const char *path2);
+void deleteFile(fs::FS &fs, const char *path);
+void testFileIO(fs::FS &fs, const char *path);
+String extractValue(const String& data, const String& key);
+/*  func sample
+  listDir(SPIFFS, "/", 0);
+  writeFile(SPIFFS, "/hello.txt", "Hello ");
+  appendFile(SPIFFS, "/hello.txt", "World!\r\n");
+  readFile(SPIFFS, "/hello.txt");
+  renameFile(SPIFFS, "/hello.txt", "/foo.txt");
+  readFile(SPIFFS, "/foo.txt");
+  deleteFile(SPIFFS, "/foo.txt");
+  testFileIO(SPIFFS, "/test.txt");
+  deleteFile(SPIFFS, "/test.txt");
+*/
 
 /**********************PIN定义***********************/
 
@@ -62,10 +93,18 @@ IPAddress dns2(8, 8, 8, 8);
 /**********************函数声明**********************/
 void updateSysInfo();
 void updateBattery();
-void updateTime(int xaddr = 16, int yaddr = 81);
-void checkWifiStatus();
+void updateTime(String timeString, int xaddr = 16, int yaddr = 81);
+String checkWifiStatus();
 bool isWifiConnected();
-void scanwifi();
+bool tryConnectWifi(const char* _ssid, const char* _password);
+bool tryConnectWifi(const char *_ssid);
+void print_wakeup_reason();
+void updateTxt(String str, int lineOffset = 0);
+bool getScannedNetworks(uint16_t networksFound, String *networks);
+void startWiFiScan();
+void handleRoot(String tableData);
+void handleSubmit();
+void WebConnectWifi();
 /**********************END**************************/
 
 
@@ -94,7 +133,12 @@ void scanwifi();
 // int RES_Pin;
 // int BUSY_Pin;
 
+#define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  1800        /* Time ESP32 will go to sleep (in seconds) */
+
 // 墨水屏分辨率信息
+#define hdpi 128
+#define wdpi 296
 #define MAX_LINE_BYTES 16  // =byte/8
 #define MAX_COLUMN_BYTES 296
 #define ALLSCREEN_GRAGHBYTES 4736  // = MAX_LINE_BYTES * MAX_COLUMN_BYTES * 8
@@ -159,19 +203,15 @@ public:
   void updateTime() {
     fetchTime();
   }
+  String getNormalString();
   String getCurrentTime();
   String getCurrentDate();
   String getDayOfWeek();
   int getYear();
-
   int getMonth();
-
   int getDay();
-
   int getHour();
-
   int getMinute();
-
   int getSecond();
 
 private:
@@ -10830,6 +10870,7 @@ const unsigned char gImage_chinese_16[7000][16] PROGMEM = {
   { 0xFF, 0xFE, 0xFE, 0xBE, 0xBE, 0xA0, 0xBE, 0xAE, 0xA0, 0x08, 0xAE, 0xAE, 0xAE, 0xA0, 0x08, 0xFE },
   { 0xAE, 0xA0, 0xAE, 0xAE, 0xA0, 0x08, 0xBE, 0xAE, 0xBE, 0xA0, 0xFE, 0xBE, 0xFF, 0xFE, 0xFF, 0xFF }, /*"矗",3499*/
 };
+
 const unsigned char gImage_ascii_16[95][16] PROGMEM = {
   { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, /*" ",0*/
   { 0xFF, 0xFF, 0xBF, 0xFF, 0xBF, 0xFF, 0xDF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, /*"`",1*/
